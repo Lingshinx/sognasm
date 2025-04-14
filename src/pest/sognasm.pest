@@ -1,0 +1,146 @@
+WHITESPACE = _{ " " | "\t" | "\r" }
+COMMENT    = _{ ";" ~ (!"\n" ~ ANY)* }
+
+file = _{ SOI ~ block ~ EOI }
+
+block = _{ NEWLINE* ~ (stmt ~ NEWLINE+)* ~ stmt? }
+
+stmt = _{
+    func_name ~ func_start ~ func_body ~ func_end
+  | label ~ NEWLINE* ~ commands
+  | commands
+}
+
+identifier = @{ (ASCII_ALPHA_LOWER | "_")+ }
+func_name  = @{ identifier }
+label      = _{ func_name ~ (":") }
+
+func_start = _{ "{" }
+func_body  = _{ block }
+func_end   =  { "}" }
+
+commands = { cmd+ }
+
+cmd = _{
+    Let
+  | Add
+  | SubBy
+  | Sub
+  | DivBy
+  | Div
+  | Mul
+  | ModBy
+  | Mod
+  | Xor
+  | BitOr
+  | BitAnd
+  | And
+  | Or
+  | Not
+  | Lt
+  | Gt
+  | Eq
+  | Le
+  | Ge
+  | If
+  | Type
+  | Push
+  | Local
+  | Drop
+  | Call
+  | Ret
+  | Capture
+  | CapFromCap
+  | Capped
+  | PushCapped
+  | List
+  | Insert
+  | Append
+  | Concat
+  | Length
+  | Empty
+  | Head
+  | Rest
+  | Input
+  | Output
+  | Print
+  | Flush
+  | Byte
+  | Char
+  | Num
+  | Func
+  | Str
+  | True
+  | False
+  | End
+}
+
+Add    = { "Add" }
+Sub    = { "Sub" }
+SubBy  = { "SubBy" }
+Div    = { "Div" }
+DivBy  = { "DivBy" }
+Mul    = { "Mul" }
+Mod    = { "Mod" }
+ModBy  = { "ModBy" }
+Xor    = { "Xor" }
+BitOr  = { "BitOr" }
+BitAnd = { "BitAnd" }
+And    = { "And" }
+Or     = { "Or" }
+Not    = { "Not" }
+Lt     = { "Lt" }
+Gt     = { "Gt" }
+Eq     = { "Eq" }
+Le     = { "Le" }
+Ge     = { "Ge" }
+If     = { "If" }
+Type   = { "Type" }
+Let    = { "Let" }
+Drop   = { "Drop" }
+Ret    = { "Ret" }
+List   = { "List" }
+Insert = { "Insert" }
+Append = { "Append" }
+Concat = { "Concat" }
+Length = { "Length" }
+Empty  = { "Empty" }
+Head   = { "Head" }
+Rest   = { "Rest" }
+Input  = { "Input" }
+Output = { "Output" }
+Print  = { "Print" }
+Flush  = { "Flush" }
+True   = { "True" }
+False  = { "False" }
+End    = { "End" }
+
+Call = { identifier }
+
+Local      = { "(" ~ "$" ~ offset ~ ")" }
+Push       = { "$" ~ offset }
+Capped     = { "(" ~ "#" ~ offset ~ ")" }
+PushCapped = { "#" ~ offset }
+
+Capture    =  { "$" ~ CapList }
+CapFromCap =  { "#" ~ CapList }
+CapList    = _{ "[" ~ offset+ ~ "]" }
+offset     = @{ ASCII_DIGIT+ }
+
+Num = @{
+    "-"? ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ ("." ~ ASCII_DIGIT*)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+
+Func = { "(" ~ identifier ~ ")" }
+
+Byte = @{ ("0" ~ ASCII_HEX_DIGIT{2} | ASCII_DIGIT ~ ASCII_HEX_DIGIT) ~ "H" }
+
+Str  = ${ "\"" ~ schar ~ "\"" }
+Char = ${ "'" ~ cchar ~ "'" }
+
+schar  = @{ ((!("\\" | "\"") ~ ANY) | escape | "\\" ~ "\"")* }
+cchar  = @{ ((!("\\" | "'") ~ ANY) | escape | "\\" ~ "\'")* }
+escape = _{
+    "\\" ~ ("\\" | "/" | "b" | "f" | "n" | "r" | "t")
+  | "\\" ~ ("x" ~ ASCII_HEX_DIGIT{2})
+}
