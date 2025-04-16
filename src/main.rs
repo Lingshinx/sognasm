@@ -34,9 +34,21 @@ fn main() {
         }
     };
 
-    // builder.display(1);
-
-    let asm = Asm::from(builder.clone());
-
-    Runtime::run(asm);
+    match (arguments.is_print(), arguments.is_code()) {
+        (true, true) => {
+            let asm = Asm::from(builder);
+            Runtime::run_printing_code(asm, arguments.speed());
+        }
+        (true, false) => {
+            let asm = Asm::from(builder);
+            Runtime::run_printing(asm, arguments.speed());
+        }
+        (false, true) => {
+            builder.display(0);
+        }
+        (false, false) => {
+            let asm = Asm::from(builder);
+            Runtime::run(asm);
+        }
+    }
 }

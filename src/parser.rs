@@ -120,14 +120,12 @@ impl From<AsmBuilder<'_>> for Asm {
                         bytes.push_byte(offset);
                     }
                 }
-                Func(lab) => bytes.push_offset(function_pool.insert(lab)),
+                Func(lab) => bytes.push_offset(function_pool.insert(lab.as_str())),
                 Label(span) => {
-                    label_record.insert(span, bytes.len());
+                    label_record.insert(span.as_str(), bytes.len());
                 }
             }
         }
-
-        // assert_eq!(bytes.len(), builder.index);
         Asm::new(
             bytes,
             string_pool.into_vec(),

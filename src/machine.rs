@@ -77,3 +77,8 @@ impl<'a> Machine<'a> {
         self.stack.push(list);
     }
 }
+impl std::fmt::Display for &Machine<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.stack)
+    }
+}

@@ -2,6 +2,7 @@ use crate::machine::Machine;
 use std::collections::LinkedList;
 use std::io::Read;
 use std::io::Write;
+use std::time::Duration;
 
 use crate::assemble::Asm;
 use crate::command::Oper;
@@ -40,13 +41,35 @@ impl<'a> Runtime<'a> {
 
     pub fn run(mut asm: Asm) {
         let mut runtime = Runtime::new(&mut asm);
-        runtime.start();
+        loop {
+            let oper = runtime.oper();
+            if let Err(e) = runtime.deal_oper(oper) {
+                println!("\x1b[31m{}\x1b[0m", e);
+                std::process::exit(1);
+            }
+        }
     }
 
-    pub fn start(&mut self) {
+    pub fn run_printing_code(mut asm: Asm, speed: u64) {
+        let mut runtime = Runtime::new(&mut asm);
         loop {
-            let oper = self.oper();
-            if let Err(e) = self.deal_oper(oper) {
+            let oper = runtime.oper();
+            println!("Oper:{:?} \tStack:{}", oper, &runtime.machine);
+            std::thread::sleep(Duration::from_millis(speed));
+            if let Err(e) = runtime.deal_oper(oper) {
+                println!("\x1b[31m{}\x1b[0m", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    pub fn run_printing(mut asm: Asm, speed: u64) {
+        let mut runtime = Runtime::new(&mut asm);
+        loop {
+            let oper = runtime.oper();
+            println!("Oper:{:?} \tStack:{}", oper, &runtime.machine);
+            std::thread::sleep(Duration::from_millis(speed));
+            if let Err(e) = runtime.deal_oper(oper) {
                 println!("\x1b[31m{}\x1b[0m", e);
                 std::process::exit(1);
             }
@@ -170,7 +193,7 @@ impl<'a> Runtime<'a> {
             Push => {
                 let offset = self.byte();
                 let value = self.machine.local(offset).clone();
-                self.push(value)?
+                self.local(value)?
             }
 
             Local => {
@@ -206,7 +229,7 @@ impl<'a> Runtime<'a> {
                 self.jmp(ip + length);
                 if let Function(ip) = self.pop()? {
                     let closure = Rc::new(crate::value::Closure { ip, capture });
-                    self.local(Closure(closure))?;
+                    self.push(Closure(closure))?;
                 } else {
                     return Err("不是闭包");
                 }
@@ -233,7 +256,7 @@ impl<'a> Runtime<'a> {
                         .cloned()
                         .collect();
                     let closure = Rc::new(crate::value::Closure { ip, capture });
-                    self.local(Closure(closure))?;
+                    self.push(Closure(closure))?;
                 }
             }
 
@@ -263,7 +286,7 @@ impl<'a> Runtime<'a> {
                 let top = self.pop()?;
                 self.update_list(|mut list| {
                     list.push_front(top);
-                    list
+                    Ok(list)
                 })?;
             }
 
@@ -271,7 +294,7 @@ impl<'a> Runtime<'a> {
                 let top = self.pop()?;
                 self.update_list(|mut list| {
                     list.push_back(top);
-                    list
+                    Ok(list)
                 })?;
             }
 
@@ -289,15 +312,15 @@ impl<'a> Runtime<'a> {
                 }
             }
 
-            Length => self.with_list(|list| Number(list.len() as f64))?,
+            Length => self.with_list(|list| Ok(Number(list.len() as f64)))?,
 
-            Empty => self.with_list(|list| Bool(list.is_empty()))?,
+            Empty => self.with_list(|list| Ok(Bool(list.is_empty())))?,
 
-            Head => self.with_list(|list| list.front().expect("空列表").clone())?,
+            Head => self.with_list(|list| Ok(list.front().ok_or("从空列表中取出头部")?.clone()))?,
 
             Rest => self.update_list(|mut list| {
-                list.pop_front().expect("空列表");
-                list
+                list.pop_front().ok_or("空列表取出尾部")?;
+                Ok(list)
             })?,
 
             Input => self.local(Value::Byte(read().expect("读取失败")))?,
@@ -345,22 +368,11 @@ impl<'a> Runtime<'a> {
             True => self.machine.push(Bool(true))?,
 
             False => self.machine.push(Bool(false))?,
+            End => std::process::exit(0),
             _ => unreachable!(),
         };
         Ok(())
     }
-
-    // fn print(&self, oper: &Oper) {
-    //     print!(
-    //         "{}: {:?} {}\t {}: {:?}",
-    //         "Oper".green().bold(),
-    //         oper,
-    //         self.codes.index,
-    //         "Stack".blue().bold(),
-    //         self.stack
-    //     );
-    //     std::io::stdout().flush().unwrap();
-    // }
 
     fn unary<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
@@ -368,8 +380,7 @@ impl<'a> Runtime<'a> {
     {
         let a = self.pop()?;
         let x = f(a);
-        self.local(x)?;
-        Ok(())
+        self.local(x)
     }
 
     fn binary_f<T>(&mut self, f: T) -> Result<(), ErrorMessage>
@@ -379,8 +390,7 @@ impl<'a> Runtime<'a> {
         use Value::*;
         let a = self.pop()?;
         let b = self.pop()?;
-        self.local(Number(f(a.into_number(), b.into_number())))?;
-        Ok(())
+        self.local(Number(f(a.into_number(), b.into_number())))
     }
 
     fn binary_i<T>(&mut self, f: T) -> Result<(), ErrorMessage>
@@ -390,8 +400,7 @@ impl<'a> Runtime<'a> {
         use Value::*;
         let a = self.pop()?;
         let b = self.pop()?;
-        self.local(Number(f(a.into_integer(), b.into_integer()) as f64))?;
-        Ok(())
+        self.local(Number(f(a.into_integer(), b.into_integer()) as f64))
     }
 
     fn binary_bool<T>(&mut self, f: T) -> Result<(), ErrorMessage>
@@ -401,8 +410,7 @@ impl<'a> Runtime<'a> {
         use Value::*;
         let a = self.pop()?;
         let b = self.pop()?;
-        self.local(Bool(f(a.into_bool(), b.into_bool())))?;
-        Ok(())
+        self.local(Bool(f(a.into_bool(), b.into_bool())))
     }
 
     fn binary_cmp<T>(&mut self, f: T) -> Result<(), ErrorMessage>
@@ -412,17 +420,15 @@ impl<'a> Runtime<'a> {
         use Value::*;
         let a = self.pop()?;
         let b = self.pop()?;
-        self.local(Bool(f(a.into_number(), b.into_number())))?;
-        Ok(())
+        self.local(Bool(f(a.into_number(), b.into_number())))
     }
 
     fn with_list<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
-        T: Fn(LinkedList<Value>) -> Value,
+        T: Fn(LinkedList<Value>) -> Result<Value, ErrorMessage>,
     {
         if let Value::List(list) = self.pop()? {
-            self.local(f(list))?;
-            Ok(())
+            self.local(f(list)?)
         } else {
             Err("不是列表")
         }
@@ -430,11 +436,10 @@ impl<'a> Runtime<'a> {
 
     fn update_list<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
-        T: FnOnce(LinkedList<Value<'a>>) -> LinkedList<Value<'a>>,
+        T: FnOnce(LinkedList<Value<'a>>) -> Result<LinkedList<Value<'a>>, ErrorMessage>,
     {
         if let Value::List(list) = self.pop()? {
-            self.local(Value::List(f(list)))?;
-            Ok(())
+            self.local(Value::List(f(list)?))
         } else {
             Err("不是列表")
         }
