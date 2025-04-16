@@ -5,8 +5,8 @@ use crate::value::Value;
 
 #[derive(Debug, Default)]
 pub struct Machine<'a> {
-    variable: Vec<Value<'a>>,
-    stack: Vec<Value<'a>>,
+    pub variable: Vec<Value<'a>>,
+    pub stack: Vec<Value<'a>>,
     sp: usize,
 
     temp_stack: Vec<Value<'a>>,
@@ -80,6 +80,7 @@ impl<'a> Machine<'a> {
 }
 impl std::fmt::Display for &Machine<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.stack)
+        writeln!(f, "stack: {:?}", self.stack)?;
+        write!(f, "local: {:?}", self.variable)
     }
 }

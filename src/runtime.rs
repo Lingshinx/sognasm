@@ -2,6 +2,7 @@ use crate::error::ErrorMessage;
 use crate::error::ErrorMessage::*;
 use crate::machine::Machine;
 use std::collections::LinkedList;
+use std::fmt;
 use std::io::Read;
 use std::io::Write;
 use std::time::Duration;
@@ -16,6 +17,7 @@ pub struct Runtime<'a> {
     index: usize,
     codes: &'a Asm,
     machine: Machine<'a>,
+    writer: Box<dyn Write>,
 }
 
 fn read() -> Option<u8> {
@@ -32,7 +34,23 @@ impl<'a> Runtime<'a> {
             index: 0,
             codes: asm,
             machine: Machine::new(),
+            writer: Box::new(std::io::stdout()),
         }
+    }
+
+    pub fn new_with_writer(asm: &'a mut Asm, writer: Box<dyn Write>) -> Runtime<'a> {
+        Runtime {
+            index: 0,
+            codes: asm,
+            machine: Machine::new(),
+            writer,
+        }
+    }
+
+    fn write(&mut self, fmt: fmt::Arguments<'_>) -> Result<(), ErrorMessage> {
+        self.writer
+            .write_fmt(fmt)
+            .map_err(|_| ErrorMessage::PrintErr)
     }
 
     pub fn next(&mut self) {
@@ -51,15 +69,17 @@ impl<'a> Runtime<'a> {
 
     pub fn run_printing_code(mut asm: Asm, speed: u64, labels: Vec<String>) {
         let asm_clone = asm.clone();
-        let mut runtime = Runtime::new(&mut asm);
+        let writer = Box::new(std::io::Cursor::new(vec![0b0; 15]));
+        let mut runtime = Runtime::new_with_writer(&mut asm, writer);
         loop {
             let oper = runtime.oper();
-            println!("\x1bcOper:{:?} \tStack:{}", oper, &runtime.machine);
+            println!("\x1bcOper:{:?} \n{}", oper, &runtime.machine);
             asm_clone.display(runtime.index, &labels);
-            std::thread::sleep(Duration::from_millis(speed));
+            println!();
             if let Err(e) = runtime.deal_oper(oper) {
                 Runtime::error_print(e);
             }
+            std::thread::sleep(Duration::from_millis(speed));
         }
     }
 
@@ -67,8 +87,11 @@ impl<'a> Runtime<'a> {
         let mut runtime = Runtime::new(&mut asm);
         loop {
             let oper = runtime.oper();
-            println!("Oper:{:?} \tStack:{}", oper, &runtime.machine);
-            std::thread::sleep(Duration::from_millis(speed));
+            if let Oper::Ret = oper {
+            } else {
+                println!("Oper:{:?} \t{:?}", oper, &runtime.machine.stack);
+                std::thread::sleep(Duration::from_millis(speed));
+            }
             if let Err(e) = runtime.deal_oper(oper) {
                 Runtime::error_print(e);
             }
@@ -327,25 +350,22 @@ impl<'a> Runtime<'a> {
 
             Input => self.local(Value::Byte(read().expect("读取失败")))?,
 
-            Output => print!("{:?}", self.pop()?),
+            Output => {
+                let value = self.pop()?;
+                self.write(format_args!("{:?}", value))?
+            }
 
             Print => match self.pop()? {
-                String(str) => {
-                    print!("{}", str);
+                String(str) => self.write(format_args!("{}", str))?,
+                Value::Byte(byte) => self.write(format_args!("{}", byte as char))?,
+                Number(number) => self.write(format_args!("{}", number))?,
+                Bool(boolean) => self.write(format_args!("{}", boolean))?,
+                _ => {
+                    return Err(PrintErr);
                 }
-                Value::Byte(byte) => {
-                    print!("{}", byte as char)
-                }
-                Number(number) => {
-                    print!("{}", number)
-                }
-                Bool(boolean) => {
-                    print!("{}", boolean)
-                }
-                _ => {}
             },
 
-            Flush => std::io::stdout().flush().unwrap(),
+            Flush => self.writer.flush().unwrap(),
 
             Oper::Byte => {
                 let byte = self.byte();

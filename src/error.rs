@@ -7,6 +7,7 @@ pub enum ErrorMessage {
     RestEmpty,
     HeadEmpty,
     ConcatNotList,
+    PrintErr,
 }
 
 impl std::fmt::Display for ErrorMessage {
@@ -27,6 +28,7 @@ impl ErrorMessage {
             RestEmpty => "不可以从空列表中取尾部! :(",
             HeadEmpty => "不可以从空列表中取头部! :(",
             ConcatNotList => "Concat需要两个列表! :(",
+            PrintErr => "输出时错误 :(",
         }
     }
 }
