@@ -36,13 +36,13 @@ pub enum Oper {
     Call,  // 后接一个usize，调用对应函数
     Ret,   // 退出函数, 销毁局部变量
 
-    Capture,    // 将栈顶的函数变成闭包，后接一个u8, 表示数组长度，接下来的数组表示捕获列表
-    CapFromCap, // 后接一个u8, 表示数组长度，接下来的数组表示捕获列表, 从捕获列表中捕获
-    Capped,     // 后接一个u8, 将对应捕获变量放到栈上，如果是函数就调用
-    PushCapped, // 后接一个u8, 将对应捕获变量放到栈上
+    Capture, // 将栈顶的函数变成闭包，后接一个u8, 表示数组长度，接下来的数组表示捕获列表
+    CapCap,  // 后接一个u8, 表示数组长度，接下来的数组表示捕获列表, 从捕获列表中捕获
+    Capped,  // 后接一个u8, 将对应捕获变量放到栈上，如果是函数就调用
+    PushCap, // 后接一个u8, 将对应捕获变量放到栈上
 
     NewList, // 切换到新栈, 并调用栈顶函数
-    Collect, // 收集栈转换成列表, 回到旧栈
+    Collect, // 收集栈转换成逆序列表, 回到旧栈
     Insert,  // 将元素放在列表前
     Append,  // 将元素放在列表后
     Concat,  // 连接两个列表
@@ -121,9 +121,9 @@ impl From<&Cmd> for Oper {
             27 => Ret,
 
             28 => Capture,
-            29 => CapFromCap,
+            29 => CapCap,
             30 => Capped,
-            31 => PushCapped,
+            31 => PushCap,
 
             32 => NewList,
             33 => Collect,

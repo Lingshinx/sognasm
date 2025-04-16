@@ -1,3 +1,5 @@
+use crate::error::ErrorMessage;
+use crate::error::ErrorMessage::*;
 use crate::machine::Machine;
 use std::collections::LinkedList;
 use std::io::Read;
@@ -24,8 +26,6 @@ fn read() -> Option<u8> {
     }
 }
 
-pub type ErrorMessage = &'static str;
-
 impl<'a> Runtime<'a> {
     pub fn new(asm: &'a mut Asm) -> Runtime<'a> {
         Runtime {
@@ -44,21 +44,21 @@ impl<'a> Runtime<'a> {
         loop {
             let oper = runtime.oper();
             if let Err(e) = runtime.deal_oper(oper) {
-                println!("\x1b[31m{}\x1b[0m", e);
-                std::process::exit(1);
+                Runtime::error_print(e);
             }
         }
     }
 
-    pub fn run_printing_code(mut asm: Asm, speed: u64) {
+    pub fn run_printing_code(mut asm: Asm, speed: u64, labels: Vec<String>) {
+        let asm_clone = asm.clone();
         let mut runtime = Runtime::new(&mut asm);
         loop {
             let oper = runtime.oper();
-            println!("Oper:{:?} \tStack:{}", oper, &runtime.machine);
+            println!("\x1bcOper:{:?} \tStack:{}", oper, &runtime.machine);
+            asm_clone.display(runtime.index, &labels);
             std::thread::sleep(Duration::from_millis(speed));
             if let Err(e) = runtime.deal_oper(oper) {
-                println!("\x1b[31m{}\x1b[0m", e);
-                std::process::exit(1);
+                Runtime::error_print(e);
             }
         }
     }
@@ -70,10 +70,14 @@ impl<'a> Runtime<'a> {
             println!("Oper:{:?} \tStack:{}", oper, &runtime.machine);
             std::thread::sleep(Duration::from_millis(speed));
             if let Err(e) = runtime.deal_oper(oper) {
-                println!("\x1b[31m{}\x1b[0m", e);
-                std::process::exit(1);
+                Runtime::error_print(e);
             }
         }
+    }
+
+    pub fn error_print(msg: ErrorMessage) {
+        println!("\n\t\x1b[1;31m{}\x1b[0m", msg);
+        std::process::exit(1);
     }
 
     fn ret(&mut self) {
@@ -154,7 +158,7 @@ impl<'a> Runtime<'a> {
         self.codes.function_pool[offset]
     }
 
-    fn deal_oper(&mut self, oper: Oper) -> Result<(), &'static str> {
+    fn deal_oper(&mut self, oper: Oper) -> Result<(), ErrorMessage> {
         use Oper::*;
         use Value::*;
         match oper {
@@ -193,13 +197,13 @@ impl<'a> Runtime<'a> {
             Push => {
                 let offset = self.byte();
                 let value = self.machine.local(offset).clone();
-                self.local(value)?
+                self.push(value)?
             }
 
             Local => {
                 let offset = self.byte();
                 let value = self.machine.local(offset).clone();
-                self.push(value)?
+                self.local(value)?
             }
 
             Pop => {
@@ -219,32 +223,28 @@ impl<'a> Runtime<'a> {
             Ret => self.ret(),
 
             Capture => {
-                let length = self.byte() as usize;
-                let ip = self.index;
-                let span = &self.codes.cmds[ip..ip + length];
-                let capture: Vec<Value> = span
+                let (list, index) = self.codes.list(self.index);
+                let capture: Vec<Value> = list
                     .iter()
                     .map(|x| self.machine.local(x.0).clone())
                     .collect();
-                self.jmp(ip + length);
+                self.jmp(index);
                 if let Function(ip) = self.pop()? {
                     let closure = Rc::new(crate::value::Closure { ip, capture });
                     self.push(Closure(closure))?;
                 } else {
-                    return Err("不是闭包");
+                    return Err(NotaClosure);
                 }
             }
 
-            CapFromCap => {
-                let length = self.byte() as usize;
-                let ip = self.index;
-                let span = &self.codes.cmds[ip..ip + length];
+            CapCap => {
+                let (list, index) = self.codes.list(self.index);
                 let closure = if let Closure(closure) = self.machine.local(0) {
                     closure
                 } else {
-                    return Err("不是闭包");
+                    return Err(NotaClosure);
                 };
-                let capture: Vec<Value> = span
+                let capture: Vec<Value> = list
                     .iter()
                     .map(|x| closure.capture[x.0 as usize].clone())
                     .collect();
@@ -255,12 +255,12 @@ impl<'a> Runtime<'a> {
                         .chain(capture.iter())
                         .cloned()
                         .collect();
-                    let closure = Rc::new(crate::value::Closure { ip, capture });
+                    let closure = Rc::new(crate::value::Closure { ip: index, capture });
                     self.push(Closure(closure))?;
                 }
             }
 
-            PushCapped => {
+            PushCap => {
                 let index = self.byte();
                 let value = self.machine.get_closure()?.capture[index as usize].clone();
                 self.push(value)?;
@@ -275,7 +275,7 @@ impl<'a> Runtime<'a> {
             NewList => {
                 let fun = self.pop()?;
                 self.machine.swap_temp();
-                self.push(fun)?;
+                self.local(fun)?;
             }
 
             Collect => {
@@ -308,7 +308,7 @@ impl<'a> Runtime<'a> {
                     }
                     self.local(Value::List(first))?
                 } else {
-                    return Err("Concat 需要两个列表");
+                    return Err(ConcatNotList);
                 }
             }
 
@@ -316,10 +316,12 @@ impl<'a> Runtime<'a> {
 
             Empty => self.with_list(|list| Ok(Bool(list.is_empty())))?,
 
-            Head => self.with_list(|list| Ok(list.front().ok_or("从空列表中取出头部")?.clone()))?,
+            Head => {
+                self.with_list(|list| Ok(list.front().ok_or(ErrorMessage::HeadEmpty)?.clone()))?
+            }
 
             Rest => self.update_list(|mut list| {
-                list.pop_front().ok_or("空列表取出尾部")?;
+                list.pop_front().ok_or(ErrorMessage::RestEmpty)?;
                 Ok(list)
             })?,
 
@@ -430,7 +432,7 @@ impl<'a> Runtime<'a> {
         if let Value::List(list) = self.pop()? {
             self.local(f(list)?)
         } else {
-            Err("不是列表")
+            Err(NotaList)
         }
     }
 
@@ -441,7 +443,7 @@ impl<'a> Runtime<'a> {
         if let Value::List(list) = self.pop()? {
             self.local(Value::List(f(list)?))
         } else {
-            Err("不是列表")
+            Err(NotaList)
         }
     }
 }

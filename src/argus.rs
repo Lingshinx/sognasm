@@ -1,34 +1,20 @@
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+use clap::{arg, value_parser, ArgAction, ArgMatches, Command};
 
 pub struct Arguments(ArgMatches);
 
 fn argus() -> ArgMatches {
     Command::new("Sognasm")
         .version("v0.2.0")
-        .about("Sognac的汇编解释器（有这种东西吗？）")
-        .arg(Arg::new("source").required(true))
+        .about("Sognac的字节码解释器")
+        .arg(arg!([source]).required(true))
+        .arg(arg!(-p --print "打印运行栈").action(ArgAction::SetTrue).required(false))
         .arg(
-            Arg::new("print")
-                .long("print")
-                .short('p')
-                .action(ArgAction::SetTrue)
-                .required(false),
-        )
-        .arg(
-            Arg::new("speed")
-                .long("speed")
-                .short('s')
+            arg!(-s --speed <speed> "打印周期(单位:ms)")
                 .value_parser(value_parser!(u64))
                 .default_value("100"),
         )
-        .arg(
-            Arg::new("code")
-                .long("code")
-                .short('c')
-                .action(ArgAction::SetTrue)
-                .required(false),
-        )
-        .arg(Arg::new("output").long("output").short('o').required(false))
+        .arg(arg!(-c --code "打印字节码").action(ArgAction::SetTrue).required(false))
+        // .arg(arg!(-o --output <file> ).required(false))
         .get_matches()
 }
 

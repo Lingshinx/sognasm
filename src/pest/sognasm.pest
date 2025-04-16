@@ -117,10 +117,10 @@ End    = { "End" }
 
 Call = { identifier }
 
-Local      = { "(" ~ "$" ~ offset ~ ")" }
-Push       = { "$" ~ offset }
-Capped     = { "(" ~ "#" ~ offset ~ ")" }
-PushCapped = { "#" ~ offset }
+Push       = { "(" ~ "$" ~ offset ~ ")" }
+Local      = { "$" ~ offset }
+PushCapped = { "(" ~ "#" ~ offset ~ ")" }
+Capped     = { "#" ~ offset }
 
 Capture    =  { "$" ~ CapList }
 CapFromCap =  { "#" ~ CapList }

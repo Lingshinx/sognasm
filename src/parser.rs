@@ -100,6 +100,51 @@ impl ByteCode for Vec<Cmd> {
     }
 }
 
+impl Asm {
+    pub fn from_builder(builder: AsmBuilder) -> (Self, Vec<String>) {
+        use AsmCmd::*;
+        let mut string_pool = Record::new();
+        let mut number_pool = Record::new();
+        let mut function_pool = Record::new();
+        let mut label_record = HashMap::new();
+        let mut bytes = Vec::<Cmd>::new();
+        for cmd in builder.cmds {
+            match cmd {
+                Number(number) => bytes.push_offset(number_pool.insert(number)),
+                Str(string) => bytes.push_offset(string_pool.insert(string)),
+                Command(cmd) => bytes.push_oper(cmd),
+                Byte(byte) => bytes.push_byte(byte),
+                List(vec) => {
+                    bytes.push_byte(vec.len() as u8);
+                    for offset in vec {
+                        bytes.push_byte(offset);
+                    }
+                }
+                Func(lab) => bytes.push_offset(function_pool.insert(lab.as_str())),
+                Label(span) => {
+                    let str = span.as_str();
+                    function_pool.insert(str);
+                    label_record.insert(str, bytes.len());
+                }
+            }
+        }
+        let func_vec = function_pool.into_vec();
+        println!("func: {:?}", func_vec);
+        (
+            Asm::new(
+                bytes,
+                string_pool.into_vec(),
+                number_pool.into_vec(),
+                func_vec
+                    .iter()
+                    .map(|x| *label_record.get(x).unwrap())
+                    .collect(),
+            ),
+            func_vec.into_iter().map(|str| str.to_owned()).collect(),
+        )
+    }
+}
+
 impl From<AsmBuilder<'_>> for Asm {
     fn from(builder: AsmBuilder) -> Self {
         use AsmCmd::*;
@@ -126,6 +171,7 @@ impl From<AsmBuilder<'_>> for Asm {
                 }
             }
         }
+
         Asm::new(
             bytes,
             string_pool.into_vec(),
@@ -209,6 +255,58 @@ impl<'a> AsmBuilder<'a> {
         }
     }
 
+    pub fn display(&self, index: usize) {
+        let mut counter = 0;
+        for cmd in &self.cmds {
+            counter += 1;
+            if counter % 13 == 0 {
+                print!("\n  ");
+            } else {
+                print!("  ");
+            };
+            if index == counter {
+                print!("\x1b[3;4m")
+            }
+            match cmd {
+                AsmCmd::Number(number) => print!("{}", number.0),
+                AsmCmd::Str(str) => {
+                    let str = if str.len() > 5 {
+                        format!("{}..", &str[..5])
+                    } else {
+                        str.to_owned()
+                    };
+                    print!("\"{}\",", str);
+                }
+                AsmCmd::Command(cmd) => {
+                    print!("\x1b[0m{}m", map_color(cmd));
+                    print!("{:?}\x1b[1m", cmd);
+                }
+                AsmCmd::Byte(byte) => {
+                    print!("{}:", byte);
+                    if byte.is_ascii_control() {
+                        print!("np",);
+                    } else {
+                        print!("'{}'", *byte as char);
+                    };
+                }
+                AsmCmd::List(list) => {
+                    let list = list
+                        .iter()
+                        .map(u8::to_string)
+                        .collect::<Vec<String>>()
+                        .join(" ");
+                    print!("[{}]", list);
+                }
+                AsmCmd::Func(name) => print!("{}", name.as_str()),
+                AsmCmd::Label(name) => {
+                    counter = 0;
+                    print!("\n\x1b[0m{}:\n", name.as_str())
+                }
+            }
+        }
+        println!("\x1b[0m")
+    }
+
     fn push_pair(&mut self, pair: Pair<'a, Rule>) {
         fn get_offset(pair: Pair<'_, Rule>) -> u8 {
             pair.into_inner()
@@ -218,7 +316,6 @@ impl<'a> AsmBuilder<'a> {
                 .parse::<u8>()
                 .unwrap()
         }
-
         use Rule::*;
         let rule = pair.as_rule();
         match rule {
@@ -276,7 +373,7 @@ impl<'a> AsmBuilder<'a> {
             }
 
             CapFromCap => {
-                self.push_cmd(Oper::CapFromCap);
+                self.push_cmd(Oper::CapCap);
                 let caplist = pair.into_inner();
                 let mut list = vec![];
                 for capped in caplist {
@@ -301,7 +398,7 @@ impl<'a> AsmBuilder<'a> {
             }
 
             PushCapped => {
-                self.push_cmd(Oper::PushCapped);
+                self.push_cmd(Oper::PushCap);
                 self.push_byte(get_offset(pair))
             }
 
@@ -346,70 +443,15 @@ impl<'a> AsmBuilder<'a> {
     }
 }
 
-impl AsmBuilder<'_> {
-    #[allow(dead_code)]
-    pub fn display(&self, index: usize) {
-        let mut counter = 0;
-        for cmd in &self.cmds {
-            counter += 1;
-            if counter % 13 == 0 {
-                print!("\n  ");
-            } else {
-                print!("  ");
-            };
-            if index == counter {
-                print!("\x1b[3;4m")
-            }
-            match cmd {
-                AsmCmd::Number(number) => print!("{}", number.0),
-                AsmCmd::Str(str) => {
-                    let str = if str.len() > 5 {
-                        format!("{}..", &str[..5])
-                    } else {
-                        str.to_owned()
-                    };
-                    print!("\"{}\",", str);
-                }
-                AsmCmd::Command(cmd) => {
-                    print!("\x1b[0m{}m", map_color(cmd));
-                    print!("{:?}\x1b[1m", cmd);
-                }
-                AsmCmd::Byte(byte) => {
-                    print!("{}:", byte);
-                    if byte.is_ascii_control() {
-                        print!("np,",);
-                    } else {
-                        print!("'{}',", *byte as char);
-                    };
-                }
-                AsmCmd::List(list) => {
-                    let list = list
-                        .iter()
-                        .map(u8::to_string)
-                        .collect::<Vec<String>>()
-                        .join(" ");
-                    print!("[{}],", list);
-                }
-                AsmCmd::Func(name) => print!("{}", name.as_str()),
-                AsmCmd::Label(name) => {
-                    counter = 0;
-                    print!("\n\x1b[0m{}:\n", name.as_str())
-                }
-            }
-        }
-        println!("\x1b[0m")
-    }
-}
-
-fn map_color(cmd: &Oper) -> String {
+pub fn map_color(cmd: &Oper) -> String {
     use Oper::*;
     let fg = match cmd {
         Call | Add | Sub | SubBy | Div | DivBy | Mul | Mod | ModBy | Xor | BitOr | BitAnd | And
         | Or | Not | Lt | Gt | Eq | Le | Ge => Color::Cyan,
         If | Type | Local | Capped | Push | Pop | Drop | Ret | End => Color::Red,
-        Capture | CapFromCap => Color::Yellow,
-        PushCapped | NewList | Collect | Insert | Append | Concat | Length | Empty | Head
-        | Rest | Input => Color::Blue,
+        Capture | CapCap => Color::Yellow,
+        PushCap | NewList | Collect | Insert | Append | Concat | Length | Empty | Head | Rest
+        | Input => Color::Blue,
         Output | Print | Flush => Color::Magenta,
         Byte | Num | Func | Str | True | False => Color::Green,
         _ => unreachable!(),

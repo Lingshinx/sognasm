@@ -1,4 +1,5 @@
-use crate::runtime::ErrorMessage;
+use crate::error::ErrorMessage;
+use crate::error::ErrorMessage::*;
 use crate::value::Closure;
 use crate::value::Value;
 
@@ -20,13 +21,13 @@ impl<'a> Machine<'a> {
         if let Some(value) = self.stack.pop() {
             Ok(value)
         } else {
-            Err("栈空了")
+            Err(UnderFlow)
         }
     }
 
     pub fn push(&mut self, v: Value<'a>) -> Result<(), ErrorMessage> {
         if self.stack.len() > 255 {
-            return Err("栈溢出了");
+            return Err(OverFlow);
         }
         self.stack.push(v);
         Ok(())
@@ -62,7 +63,7 @@ impl<'a> Machine<'a> {
         if let Value::Closure(closure) = self.local(0) {
             Ok(closure)
         } else {
-            Err("不是闭包")
+            Err(NotaClosure)
         }
     }
 
@@ -72,7 +73,7 @@ impl<'a> Machine<'a> {
 
     pub fn collect_list(&mut self) {
         let temp = std::mem::take(&mut self.stack);
-        let list = Value::List(temp.into_iter().collect());
+        let list = Value::List(temp.into_iter().rev().collect());
         self.swap_temp();
         self.stack.push(list);
     }

@@ -1,6 +1,7 @@
 mod argus;
 mod assemble;
 mod command;
+mod error;
 mod machine;
 mod parser;
 mod record;
@@ -36,8 +37,8 @@ fn main() {
 
     match (arguments.is_print(), arguments.is_code()) {
         (true, true) => {
-            let asm = Asm::from(builder);
-            Runtime::run_printing_code(asm, arguments.speed());
+            let (asm, labels) = Asm::from_builder(builder);
+            Runtime::run_printing_code(asm, arguments.speed(), labels);
         }
         (true, false) => {
             let asm = Asm::from(builder);

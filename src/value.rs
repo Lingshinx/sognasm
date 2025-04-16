@@ -33,7 +33,11 @@ impl Value<'_> {
             Function(ip) => format!("F{}", ip).bright_green().to_string(),
             Closure(rc) => format!("C{}", rc.ip).yellow().to_string(),
             List(list) => format!("{:?}", list).cyan().to_string(),
-            String(str) => str.green().to_string(),
+            String(str) => {
+                let str = if str.len() > 5 { &str[..5] } else { str };
+                format!("\x1b[32m\"{str}\"\x1b[0m")
+            }
+
             Byte(byte) => byte.to_string().bright_blue().to_string(),
             Bool(bool) => bool.to_string().red().to_string(),
         }
