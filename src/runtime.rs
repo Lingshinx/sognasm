@@ -1,24 +1,18 @@
-use colored::Colorize;
-use core::panic;
+use crate::machine::Machine;
 use std::collections::LinkedList;
 use std::io::Read;
 use std::io::Write;
-use std::thread;
-use std::time::Duration;
 
 use crate::assemble::Asm;
 use crate::command::Oper;
-use crate::parser::AsmBuilder;
 use crate::value::{Closure, Value};
 
 use std::rc::Rc;
 
-pub struct Runtime {
-    codes: Asm,
-    variable: Vec<Value>,
-    stack: Vec<Value>,
-    sp: usize,
-    temp_stack: Vec<Value>,
+pub struct Runtime<'a> {
+    index: usize,
+    codes: &'a Asm,
+    machine: Machine<'a>,
 }
 
 fn read() -> Option<u8> {
@@ -29,202 +23,209 @@ fn read() -> Option<u8> {
     }
 }
 
-impl Runtime {
-    pub fn new(asm: Asm) -> Self {
+pub type ErrorMessage = &'static str;
+
+impl<'a> Runtime<'a> {
+    pub fn new(asm: &'a mut Asm) -> Runtime<'a> {
         Runtime {
+            index: 0,
             codes: asm,
-            variable: Vec::new(),
-            stack: Vec::new(),
-            sp: 0,
-            temp_stack: Vec::new(),
+            machine: Machine::new(),
         }
     }
 
-    pub fn run_with_codes(&mut self, speed: u64, builder: AsmBuilder) {
-        print!("\x1b[?25h"); // ANSI escape sequence to hide cursor
+    pub fn next(&mut self) {
+        self.index += 1
+    }
+
+    pub fn run(mut asm: Asm) {
+        let mut runtime = Runtime::new(&mut asm);
+        runtime.start();
+    }
+
+    pub fn start(&mut self) {
         loop {
-            let oper = self.codes.oper();
-            if let Oper::End = oper {
-                break;
-            } else {
-                print!("\x1bc");
-                self.print(&oper);
-                builder.display(self.codes.index);
-                thread::sleep(Duration::from_millis(speed));
-                self.deal_oper(oper);
+            let oper = self.oper();
+            if let Err(e) = self.deal_oper(oper) {
+                println!("\x1b[31m{}\x1b[0m", e);
+                std::process::exit(1);
             }
         }
-        print!("\x1b[?25l"); // ANSI escape sequence to show cursor
-    }
-
-    pub fn run_while_printing(&mut self, speed: u64) {
-        print!("\x1b[?25h"); // ANSI escape sequence to hide cursor
-        loop {
-            let oper = self.codes.oper();
-            if let Oper::End = oper {
-                break;
-            } else {
-                thread::sleep(Duration::from_millis(speed));
-                self.deal_oper(oper);
-                self.print(&oper);
-                println!();
-            }
-        }
-        print!("\x1b[?25l"); // ANSI escape sequence to show cursor
-    }
-
-    pub fn run(&mut self) {
-        loop {
-            let oper = self.codes.oper();
-            if let Oper::End = oper {
-                break;
-            } else {
-                self.deal_oper(oper);
-            }
-        }
-    }
-
-    fn pop(&mut self) -> Value {
-        self.stack.pop().expect("栈空了")
-    }
-
-    fn push(&mut self, v: Value) {
-        match v {
-            Value::Function(ip) => self.call(ip),
-            Value::Closure(closure) => self.callosure(closure),
-            _ => self.stack.push(v),
-        }
-    }
-
-    fn relative(&self, offset: u8) -> &Value {
-        &self.variable[self.sp + (offset as usize)]
-    }
-
-    fn call(&mut self, ip: usize) {
-        self.variable.push(Value::Function(self.codes.index));
-        self.variable.push(Value::Function(self.sp));
-        self.sp = self.variable.len();
-        self.codes.jmp(ip);
     }
 
     fn ret(&mut self) {
-        use Value::Function;
-        self.variable.truncate(self.sp);
-        let sp = self.variable.pop().unwrap_or(Value::Bool(false));
-        let ip = self.variable.pop().unwrap_or(Value::Bool(false));
-        if let (Function(sp), Function(ip)) = (sp, ip) {
-            self.sp = sp;
-            self.codes.jmp(ip);
-        } else {
-            std::process::exit(0)
-        }
+        let ip = self.machine.ret_ip();
+        self.jmp(ip);
     }
-    fn callosure(&mut self, closure: Rc<Closure>) {
-        let ip = closure.ip;
-        self.variable.push(Value::Function(self.codes.index));
-        self.variable.push(Value::Function(self.sp));
-        self.sp = self.variable.len();
-        self.variable.push(Value::Closure(closure));
-        self.codes.jmp(ip);
+
+    fn pop(&mut self) -> Result<Value<'a>, ErrorMessage> {
+        self.machine.pop()
     }
-    fn get_closure(&self) -> &Closure {
-        if let Value::Closure(closure) = self.relative(0) {
-            closure
-        } else {
-            panic!("不是闭包")
+
+    fn local(&mut self, value: Value<'a>) -> Result<(), ErrorMessage> {
+        match value {
+            Value::Function(func) => {
+                self.call(func);
+                Ok(())
+            }
+            Value::Closure(clos) => {
+                self.callosure(clos);
+                Ok(())
+            }
+            _ => self.machine.push(value),
         }
     }
 
-    fn deal_oper(&mut self, oper: Oper) {
+    fn push(&mut self, value: Value<'a>) -> Result<(), ErrorMessage> {
+        self.machine.push(value)
+    }
+
+    fn call(&mut self, ip: usize) {
+        self.machine.push_to_local(Value::Function(self.index));
+        self.machine.push_sp();
+        self.jmp(ip);
+    }
+
+    fn callosure(&mut self, closure: Rc<Closure<'a>>) {
+        let ip = closure.ip;
+        self.machine.push_to_local(Value::Function(self.index));
+        self.machine.push_sp();
+        self.machine.push_to_local(Value::Closure(closure));
+        self.jmp(ip);
+    }
+
+    pub fn jmp(&mut self, ip: usize) {
+        self.index = ip
+    }
+
+    pub fn oper(&mut self) -> Oper {
+        let oper = self.codes.oper(self.index);
+        self.next();
+        oper
+    }
+
+    pub fn byte(&mut self) -> u8 {
+        let byte = self.codes.byte(self.index);
+        self.next();
+        byte
+    }
+
+    pub fn offset(&mut self) -> usize {
+        let (offset, index) = self.codes.offset(self.index);
+        self.jmp(index);
+        offset
+    }
+
+    pub fn string(&mut self) -> &'a str {
+        let offset = self.offset();
+        &self.codes.string_pool[offset]
+    }
+
+    pub fn number(&mut self) -> f64 {
+        let offset = self.offset();
+        self.codes.number_pool[offset].0
+    }
+
+    pub fn ptr(&mut self) -> usize {
+        let offset = self.offset();
+        self.codes.function_pool[offset]
+    }
+
+    fn deal_oper(&mut self, oper: Oper) -> Result<(), &'static str> {
         use Oper::*;
         use Value::*;
         match oper {
-            Add => self.binary_f(|x, y| x + y),
-            Sub => self.binary_f(|x, y| x - y),
-            SubBy => self.binary_f(|x, y| y - x),
-            Div => self.binary_f(|x, y| x / y),
-            DivBy => self.binary_f(|x, y| y / x),
-            Mul => self.binary_f(|x, y| x * y),
-            Mod => self.binary_i(|x, y| x % y),
-            ModBy => self.binary_i(|x, y| y % x),
-            Xor => self.binary_i(|x, y| x ^ y),
-            BitOr => self.binary_i(|x, y| x | y),
-            BitAnd => self.binary_i(|x, y| x & y),
-            And => self.binary_bool(|x, y| x && y),
-            Or => self.binary_bool(|x, y| x || y),
-            Lt => self.binary_cmp(|x, y| x < y),
-            Gt => self.binary_cmp(|x, y| x > y),
-            Eq => self.binary_cmp(|x, y| x == y),
-            Le => self.binary_cmp(|x, y| x <= y),
-            Ge => self.binary_cmp(|x, y| x >= y),
-            Not => self.unary(|x| Bool(!x.into_bool())),
+            Add => self.binary_f(|x, y| x + y)?,
+            Sub => self.binary_f(|x, y| x - y)?,
+            SubBy => self.binary_f(|x, y| y - x)?,
+            Div => self.binary_f(|x, y| x / y)?,
+            DivBy => self.binary_f(|x, y| y / x)?,
+            Mul => self.binary_f(|x, y| x * y)?,
+            Mod => self.binary_i(|x, y| x % y)?,
+            ModBy => self.binary_i(|x, y| y % x)?,
+            Xor => self.binary_i(|x, y| x ^ y)?,
+            BitOr => self.binary_i(|x, y| x | y)?,
+            BitAnd => self.binary_i(|x, y| x & y)?,
+            And => self.binary_bool(|x, y| x && y)?,
+            Or => self.binary_bool(|x, y| x || y)?,
+            Lt => self.binary_cmp(|x, y| x < y)?,
+            Gt => self.binary_cmp(|x, y| x > y)?,
+            Eq => self.binary_cmp(|x, y| x == y)?,
+            Le => self.binary_cmp(|x, y| x <= y)?,
+            Ge => self.binary_cmp(|x, y| x >= y)?,
+            Not => self.unary(|x| Bool(!x.into_bool()))?,
 
             If => {
-                let cond = self.pop().into_bool();
-                let a = self.pop();
-                let b = self.pop();
+                let cond = self.pop()?.into_bool();
+                let a = self.pop()?;
+                let b = self.pop()?;
                 let value = if cond { a } else { b };
-                self.push(value);
+                self.push(value)?
             }
 
-            Type => self.unary(|x| Value::Byte(x.get_type())),
+            Type => {
+                self.unary(|x| Value::Byte(x.get_type()))?;
+            }
 
             Push => {
-                let offset = self.codes.byte();
-                let value = self.relative(offset).clone();
-                self.push(value);
+                let offset = self.byte();
+                let value = self.machine.local(offset).clone();
+                self.push(value)?
             }
 
             Local => {
-                let offset = self.codes.byte();
-                let value = self.relative(offset).clone();
-                self.stack.push(value);
+                let offset = self.byte();
+                let value = self.machine.local(offset).clone();
+                self.push(value)?
             }
 
             Pop => {
-                let top = self.pop();
-                self.variable.push(top);
+                let top = self.pop()?;
+                self.machine.push_to_local(top);
             }
 
             Drop => {
-                self.pop();
+                self.pop()?;
             }
 
             Call => {
-                let ip = self.codes.ptr();
+                let ip = self.ptr();
                 self.call(ip);
             }
 
             Ret => self.ret(),
 
             Capture => {
-                let length = self.codes.byte() as usize;
-                let ip = self.codes.index;
+                let length = self.byte() as usize;
+                let ip = self.index;
                 let span = &self.codes.cmds[ip..ip + length];
-                let capture: Vec<Value> = span.iter().map(|x| self.relative(x.0).clone()).collect();
-                self.codes.jmp(ip + length);
-                if let Function(ip) = self.pop() {
+                let capture: Vec<Value> = span
+                    .iter()
+                    .map(|x| self.machine.local(x.0).clone())
+                    .collect();
+                self.jmp(ip + length);
+                if let Function(ip) = self.pop()? {
                     let closure = Rc::new(crate::value::Closure { ip, capture });
-                    self.stack.push(Closure(closure));
+                    self.local(Closure(closure))?;
                 } else {
-                    panic!("不是函数");
+                    return Err("不是闭包");
                 }
             }
 
             CapFromCap => {
-                let length = self.codes.byte() as usize;
-                let ip = self.codes.index;
+                let length = self.byte() as usize;
+                let ip = self.index;
                 let span = &self.codes.cmds[ip..ip + length];
-                let closure = if let Closure(closure) = self.relative(0) {
+                let closure = if let Closure(closure) = self.machine.local(0) {
                     closure
                 } else {
-                    panic!("不是闭包")
+                    return Err("不是闭包");
                 };
                 let capture: Vec<Value> = span
                     .iter()
                     .map(|x| closure.capture[x.0 as usize].clone())
                     .collect();
-                if let Closure(closure) = self.pop() {
+                if let Closure(closure) = self.pop()? {
                     let capture: Vec<Value> = closure
                         .capture
                         .iter()
@@ -232,203 +233,210 @@ impl Runtime {
                         .cloned()
                         .collect();
                     let closure = Rc::new(crate::value::Closure { ip, capture });
-                    self.stack.push(Closure(closure));
+                    self.local(Closure(closure))?;
                 }
             }
 
             PushCapped => {
-                let index = self.codes.byte();
-                let value = self.get_closure().capture[index as usize].clone();
-                self.push(value);
+                let index = self.byte();
+                let value = self.machine.get_closure()?.capture[index as usize].clone();
+                self.push(value)?;
             }
 
             Capped => {
-                let index = self.codes.byte();
-                let value = self.get_closure().capture[index as usize].clone();
-                self.stack.push(value);
+                let index = self.byte();
+                let value = self.machine.get_closure()?.capture[index as usize].clone();
+                self.local(value)?;
             }
 
             NewList => {
-                let fun = self.pop();
-                std::mem::swap(&mut self.stack, &mut self.temp_stack);
-                self.push(fun);
+                let fun = self.pop()?;
+                self.machine.swap_temp();
+                self.push(fun)?;
             }
 
             Collect => {
-                let temp = std::mem::take(&mut self.stack);
-                let list = temp.into_iter().collect();
-                std::mem::swap(&mut self.stack, &mut self.temp_stack);
-                self.stack.push(List(list));
+                self.machine.collect_list();
             }
 
             Insert => {
-                let top = self.pop();
+                let top = self.pop()?;
                 self.update_list(|mut list| {
                     list.push_front(top);
                     list
-                });
+                })?;
             }
 
             Append => {
-                let top = self.pop();
+                let top = self.pop()?;
                 self.update_list(|mut list| {
                     list.push_back(top);
                     list
-                });
+                })?;
             }
 
             Concat => {
-                let second_list = self.pop();
-                let first_list = self.pop();
+                let second_list = self.pop()?;
+                let first_list = self.pop()?;
 
                 if let (Value::List(mut first), Value::List(second)) = (first_list, second_list) {
                     for item in second.iter() {
                         first.push_back(item.clone());
                     }
-                    self.stack.push(Value::List(first));
+                    self.local(Value::List(first))?
                 } else {
-                    panic!("Concat 需要两个列表")
+                    return Err("Concat 需要两个列表");
                 }
             }
 
-            Length => self.with_list(|list| Number(list.len() as f64)),
+            Length => self.with_list(|list| Number(list.len() as f64))?,
 
-            Empty => self.with_list(|list| Bool(list.is_empty())),
+            Empty => self.with_list(|list| Bool(list.is_empty()))?,
 
-            Head => self.with_list(|list| list.front().expect("空列表").clone()),
+            Head => self.with_list(|list| list.front().expect("空列表").clone())?,
 
             Rest => self.update_list(|mut list| {
                 list.pop_front().expect("空列表");
                 list
-            }),
+            })?,
 
-            Input => self.stack.push(Value::Byte(read().expect("读取失败"))),
+            Input => self.local(Value::Byte(read().expect("读取失败")))?,
 
-            Output => print!("{:?}", self.pop()),
+            Output => print!("{:?}", self.pop()?),
 
-            Print => match self.pop() {
+            Print => match self.pop()? {
                 String(str) => {
                     print!("{}", str);
                 }
                 Value::Byte(byte) => {
                     print!("{}", byte as char)
                 }
-                _ => {
-                    panic!("不可打印, 你应该使用Output")
+                Number(number) => {
+                    print!("{}", number)
                 }
+                Bool(boolean) => {
+                    print!("{}", boolean)
+                }
+                _ => {}
             },
 
             Flush => std::io::stdout().flush().unwrap(),
 
             Oper::Byte => {
-                let byte = self.codes.byte();
-                self.stack.push(Value::Byte(byte));
+                let byte = self.byte();
+                self.machine.push(Value::Byte(byte))?
             }
 
             Num => {
-                let number = self.codes.number();
-                self.stack.push(Number(number));
+                let number = self.number();
+                self.machine.push(Number(number))?
             }
 
             Func => {
-                let ip = self.codes.ptr();
-                self.stack.push(Function(ip));
+                let ip = self.ptr();
+                self.machine.push(Function(ip))?
             }
 
             Str => {
-                let index = self.codes.ptr();
-                let str = self.codes.string_pool[index].clone();
-                let value = Value::String(str);
-                self.stack.push(value);
+                let string = self.string();
+                self.machine.push(String(string))?
             }
 
-            True => self.stack.push(Bool(true)),
-            False => self.stack.push(Bool(false)),
+            True => self.machine.push(Bool(true))?,
+
+            False => self.machine.push(Bool(false))?,
             _ => unreachable!(),
         };
+        Ok(())
     }
 
-    fn print(&self, oper: &Oper) {
-        print!(
-            "{}: {:?} {}\t {}: {:?}",
-            "Oper".green().bold(),
-            oper,
-            self.codes.index,
-            "Stack".blue().bold(),
-            self.stack
-        );
-        std::io::stdout().flush().unwrap();
-    }
+    // fn print(&self, oper: &Oper) {
+    //     print!(
+    //         "{}: {:?} {}\t {}: {:?}",
+    //         "Oper".green().bold(),
+    //         oper,
+    //         self.codes.index,
+    //         "Stack".blue().bold(),
+    //         self.stack
+    //     );
+    //     std::io::stdout().flush().unwrap();
+    // }
 
-    fn unary<T>(&mut self, f: T)
+    fn unary<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(Value) -> Value,
     {
-        let a = self.pop();
+        let a = self.pop()?;
         let x = f(a);
-        self.stack.push(x);
+        self.local(x)?;
+        Ok(())
     }
 
-    fn binary_f<T>(&mut self, f: T)
+    fn binary_f<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(f64, f64) -> f64,
     {
         use Value::*;
-        let a = self.pop();
-        let b = self.pop();
-        self.stack.push(Number(f(a.into_number(), b.into_number())));
+        let a = self.pop()?;
+        let b = self.pop()?;
+        self.local(Number(f(a.into_number(), b.into_number())))?;
+        Ok(())
     }
 
-    fn binary_i<T>(&mut self, f: T)
+    fn binary_i<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(i64, i64) -> i64,
     {
         use Value::*;
-        let a = self.pop();
-        let b = self.pop();
-        self.stack
-            .push(Number(f(a.into_integer(), b.into_integer()) as f64));
+        let a = self.pop()?;
+        let b = self.pop()?;
+        self.local(Number(f(a.into_integer(), b.into_integer()) as f64))?;
+        Ok(())
     }
 
-    fn binary_bool<T>(&mut self, f: T)
+    fn binary_bool<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(bool, bool) -> bool,
     {
         use Value::*;
-        let a = self.pop();
-        let b = self.pop();
-        self.stack.push(Bool(f(a.into_bool(), b.into_bool())));
+        let a = self.pop()?;
+        let b = self.pop()?;
+        self.local(Bool(f(a.into_bool(), b.into_bool())))?;
+        Ok(())
     }
 
-    fn binary_cmp<T>(&mut self, f: T)
+    fn binary_cmp<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(f64, f64) -> bool,
     {
         use Value::*;
-        let a = self.pop();
-        let b = self.pop();
-        self.stack.push(Bool(f(a.into_number(), b.into_number())));
+        let a = self.pop()?;
+        let b = self.pop()?;
+        self.local(Bool(f(a.into_number(), b.into_number())))?;
+        Ok(())
     }
 
-    fn with_list<T>(&mut self, f: T)
+    fn with_list<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
         T: Fn(LinkedList<Value>) -> Value,
     {
-        if let Value::List(list) = self.pop() {
-            self.stack.push(f(list));
+        if let Value::List(list) = self.pop()? {
+            self.local(f(list))?;
+            Ok(())
         } else {
-            panic!("不是列表")
+            Err("不是列表")
         }
     }
 
-    fn update_list<T>(&mut self, f: T)
+    fn update_list<T>(&mut self, f: T) -> Result<(), ErrorMessage>
     where
-        T: FnOnce(LinkedList<Value>) -> LinkedList<Value>,
+        T: FnOnce(LinkedList<Value<'a>>) -> LinkedList<Value<'a>>,
     {
-        if let Value::List(list) = self.pop() {
-            self.stack.push(Value::List(f(list)));
+        if let Value::List(list) = self.pop()? {
+            self.local(Value::List(f(list)))?;
+            Ok(())
         } else {
-            panic!("不是列表")
+            Err("不是列表")
         }
     }
 }

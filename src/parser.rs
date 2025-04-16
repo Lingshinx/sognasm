@@ -1,84 +1,52 @@
 use crate::assemble::Asm;
-use crate::command::Cmd;
-use crate::command::Oper;
-use crate::util::swap_kv;
-use crate::util::{align_8, uneccape, unescape};
+use crate::command::{Cmd, Oper};
+use crate::record::Record;
+use crate::util::{uneccape, unescape};
 use colored::Color;
 use core::f64;
-use pest::error::Error;
-use pest::error::ErrorVariant;
+use pest::error::{Error, ErrorVariant};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest::Span;
 use pest_derive::Parser;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::str::FromStr;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 #[derive(Parser)]
 #[grammar = "pest/sognasm.pest"]
 pub struct Sognasm;
 
-pub trait CmdVec {
-    fn push_byte(&mut self, byte: u8);
-    fn push_cmd(&mut self, oper: Oper);
-    fn push_number(&mut self, number: f64);
-    fn push_ptr(&mut self, ptr: usize);
-}
-
-impl CmdVec for Vec<Cmd> {
-    fn push_byte(&mut self, byte: u8) {
-        self.push(Cmd(byte));
-    }
-
-    fn push_cmd(&mut self, oper: Oper) {
-        self.push(Cmd::from(oper))
-    }
-
-    fn push_number(&mut self, number: f64) {
-        let size = self.len();
-        self.resize(align_8(size), Cmd(0));
-        let bytes: [u8; 8] = number.to_le_bytes();
-        for byte in bytes {
-            self.push(Cmd(byte));
-        }
-    }
-
-    fn push_ptr(&mut self, ptr: usize) {
-        let size = self.len();
-        self.resize(align_8(size), Cmd(0));
-        let bytes: [u8; 8] = ptr.to_le_bytes();
-        for byte in bytes {
-            self.push(Cmd(byte));
-        }
-    }
-}
-
 #[derive(Clone)]
 enum AsmCmd<'a> {
-    Number(f64),
-    Ptr(usize),
+    Number(Number),
     Str(String),
+    Func(Span<'a>),
     Label(Span<'a>),
     Command(Oper),
     Byte(u8),
     List(Vec<u8>),
 }
 
-#[derive(Clone)]
-pub struct AsmBuilder<'a> {
-    pub label_record: HashMap<&'a str, usize>,
-    index: usize,
-    cmds: Vec<AsmCmd<'a>>,
+#[derive(Clone, Copy, Debug)]
+pub struct Number(pub f64);
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
 }
 
-impl FromStr for Asm {
-    type Err = Box<Error<Rule>>;
+impl Eq for Number {}
 
-    fn from_str(str: &str) -> Result<Self, Self::Err> {
-        let builder = AsmBuilder::from_str(str)?;
-        Ok(Asm::from(builder))
+impl Hash for Number {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
     }
+}
+
+#[derive(Clone)]
+pub struct AsmBuilder<'a> {
+    cmds: Vec<AsmCmd<'a>>,
 }
 
 impl<'a> AsmBuilder<'a> {
@@ -88,10 +56,7 @@ impl<'a> AsmBuilder<'a> {
         let pairs = Sognasm::parse(file, str)?;
         for pair in pairs {
             match pair.as_rule() {
-                func_name => {
-                    let lab = pair.as_str();
-                    builder.record_label(lab);
-                }
+                func_name => builder.push_label(pair.as_span()),
 
                 commands => {
                     for pair in pair.into_inner().rev() {
@@ -110,25 +75,44 @@ impl<'a> AsmBuilder<'a> {
     }
 }
 
+trait ByteCode {
+    fn push_byte(&mut self, byte: u8);
+    fn push_oper(&mut self, oper: Oper);
+    fn push_offset(&mut self, offset: usize);
+}
+
+impl ByteCode for Vec<Cmd> {
+    fn push_byte(&mut self, byte: u8) {
+        self.push(Cmd(byte));
+    }
+
+    fn push_oper(&mut self, oper: Oper) {
+        self.push(Cmd(oper as u8));
+    }
+
+    fn push_offset(&mut self, offset: usize) {
+        let mut offset = offset;
+        while offset > 0xff {
+            self.push(Cmd(0xff));
+            offset -= 0xff;
+        }
+        self.push(Cmd(offset as u8));
+    }
+}
+
 impl From<AsmBuilder<'_>> for Asm {
     fn from(builder: AsmBuilder) -> Self {
         use AsmCmd::*;
-        let mut string_pool_set = HashSet::<String>::new();
-        let mut string_pool_vec = Vec::<String>::new();
+        let mut string_pool = Record::new();
+        let mut number_pool = Record::new();
+        let mut function_pool = Record::new();
+        let mut label_record = HashMap::new();
         let mut bytes = Vec::<Cmd>::new();
         for cmd in builder.cmds {
             match cmd {
-                Number(number) => bytes.push_number(number),
-                Ptr(ptr) => bytes.push_ptr(ptr),
-                Str(value) => {
-                    if !string_pool_set.contains(&value) {
-                        string_pool_set.insert(value.to_owned());
-                        string_pool_vec.push(value);
-                    }
-                    let index = string_pool_vec.len() - 1;
-                    bytes.push_ptr(index);
-                }
-                Command(cmd) => bytes.push(Cmd::from(cmd)),
+                Number(number) => bytes.push_offset(number_pool.insert(number)),
+                Str(string) => bytes.push_offset(string_pool.insert(string)),
+                Command(cmd) => bytes.push_oper(cmd),
                 Byte(byte) => bytes.push_byte(byte),
                 List(vec) => {
                     bytes.push_byte(vec.len() as u8);
@@ -136,70 +120,95 @@ impl From<AsmBuilder<'_>> for Asm {
                         bytes.push_byte(offset);
                     }
                 }
-                Label(_) => unreachable!(),
+                Func(lab) => bytes.push_offset(function_pool.insert(lab)),
+                Label(span) => {
+                    label_record.insert(span, bytes.len());
+                }
             }
         }
+
         // assert_eq!(bytes.len(), builder.index);
-        Asm::new(bytes, string_pool_vec)
+        Asm::new(
+            bytes,
+            string_pool.into_vec(),
+            number_pool.into_vec(),
+            function_pool
+                .into_vec()
+                .into_iter()
+                .map(|x| *label_record.get(&x).unwrap())
+                .collect(),
+        )
     }
 }
 
 impl<'a> AsmBuilder<'a> {
     fn new() -> Self {
-        AsmBuilder {
-            label_record: HashMap::new(),
-            index: 0,
-            cmds: Vec::new(),
-        }
-    }
-
-    fn next_align(&mut self) {
-        self.index = align_8(self.index) + 8;
+        AsmBuilder { cmds: Vec::new() }
     }
 
     fn push_str(&mut self, str: String) {
         use AsmCmd::*;
-        self.next_align();
         self.cmds.push(Str(str))
     }
 
     fn push_label(&mut self, label: Span<'a>) {
         use AsmCmd::*;
-        self.next_align();
-        if let Some(index) = self.label_record.get(label.as_str()) {
-            self.push_ptr(*index);
-        } else {
-            self.cmds.push(Label(label.to_owned()));
-        }
+        self.cmds.push(Label(label));
     }
 
+    fn push_func(&mut self, label: Span<'a>) {
+        use AsmCmd::*;
+        self.cmds.push(Func(label));
+    }
     fn push_list(&mut self, list: Vec<u8>) {
         use AsmCmd::*;
-        self.index += list.len() + 1;
         self.cmds.push(List(list));
     }
 
-    fn record_label(&mut self, label: &'a str) {
-        self.label_record.insert(label, self.index);
+    fn push_byte(&mut self, byte: u8) {
+        use AsmCmd::*;
+        self.cmds.push(Byte(byte))
+    }
+
+    fn push_cmd(&mut self, oper: Oper) {
+        use AsmCmd::*;
+        self.cmds.push(Command(oper));
+    }
+
+    fn push_number(&mut self, number: f64) {
+        self.cmds.push(AsmCmd::Number(Number(number)))
     }
 
     fn scan_label(&mut self) -> Result<(), Box<Error<Rule>>> {
         use AsmCmd::*;
-        for command in &mut self.cmds {
-            if let Label(label) = command {
-                if let Some(index) = self.label_record.get(label.as_str()) {
-                    *command = Ptr(*index);
-                } else {
-                    return Err(Box::new(Error::new_from_span(
-                        ErrorVariant::CustomError {
-                            message: "未知的标签".to_owned(),
-                        },
-                        *label,
-                    )));
+        let mut label_record = HashSet::new();
+        let mut unknown_record = HashMap::new();
+        for command in &self.cmds {
+            match command {
+                Func(name) => {
+                    unknown_record.insert(name.as_str(), name);
                 }
+                Label(name) => {
+                    label_record.insert(name.as_str());
+                }
+                _ => {}
             }
         }
-        Ok(())
+
+        for v in label_record {
+            unknown_record.remove(v);
+        }
+
+        if unknown_record.is_empty() {
+            Ok(())
+        } else {
+            Err(Box::new(Error::new_from_span(
+                ErrorVariant::CustomError {
+                    message: "未知的标签".to_owned(),
+                },
+                **unknown_record.iter().next().unwrap().1,
+            )))
+        }
     }
 
     fn push_pair(&mut self, pair: Pair<'a, Rule>) {
@@ -307,13 +316,13 @@ impl<'a> AsmBuilder<'a> {
             Func => {
                 self.push_cmd(Oper::Func);
                 let lab = pair.into_inner().next().unwrap().as_span();
-                self.push_label(lab);
+                self.push_func(lab);
             }
 
             Call => {
                 self.push_cmd(Oper::Call);
                 let lab = pair.into_inner().next().unwrap().as_span();
-                self.push_label(lab);
+                self.push_func(lab);
             }
 
             Byte => {
@@ -333,66 +342,28 @@ impl<'a> AsmBuilder<'a> {
                 let str = pair.into_inner().next().expect("解析字符串失败").as_str();
                 self.push_str(unescape(str));
             }
-
             End => self.push_cmd(Oper::End),
             _ => unreachable!(),
         }
-        println!("{:?},{}", rule, self.index);
-    }
-}
-
-impl CmdVec for AsmBuilder<'_> {
-    fn push_byte(&mut self, byte: u8) {
-        use AsmCmd::*;
-        self.index += 1;
-        self.cmds.push(Byte(byte))
-    }
-
-    fn push_cmd(&mut self, oper: Oper) {
-        use AsmCmd::*;
-        self.index += 1;
-        self.cmds.push(Command(oper));
-    }
-
-    fn push_number(&mut self, number: f64) {
-        use AsmCmd::*;
-        self.next_align();
-        self.cmds.push(Number(number))
-    }
-
-    fn push_ptr(&mut self, ptr: usize) {
-        use AsmCmd::*;
-        self.next_align();
-        self.cmds.push(Ptr(ptr))
     }
 }
 
 impl AsmBuilder<'_> {
     #[allow(dead_code)]
     pub fn display(&self, index: usize) {
-        let label = swap_kv(self.label_record.clone());
-        let mut counter = 14;
-        let mut index_counter: usize = 0;
+        let mut counter = 0;
         for cmd in &self.cmds {
-            counter = if label.contains_key(&index_counter) {
-                print!("\n\x1b[0m{}:\n  ", label.get(&index_counter).unwrap());
-                0
-            } else if counter > 13 {
+            counter += 1;
+            if counter % 13 == 0 {
                 print!("\n  ");
-                0
             } else {
                 print!("  ");
-                counter + 1
             };
+            if index == counter {
+                print!("\x1b[3;4m")
+            }
             match cmd {
-                AsmCmd::Number(number) => {
-                    print!("{},", number);
-                    index_counter = align_8(index_counter) + 8;
-                }
-                AsmCmd::Ptr(ptr) => {
-                    print!("{},", label.get(ptr).unwrap());
-                    index_counter = align_8(index_counter) + 8;
-                }
+                AsmCmd::Number(number) => print!("{}", number.0),
                 AsmCmd::Str(str) => {
                     let str = if str.len() > 5 {
                         format!("{}..", &str[..5])
@@ -400,15 +371,10 @@ impl AsmBuilder<'_> {
                         str.to_owned()
                     };
                     print!("\"{}\",", str);
-                    index_counter = align_8(index_counter) + 8;
                 }
                 AsmCmd::Command(cmd) => {
                     print!("\x1b[0m{}m", map_color(cmd));
-                    if index_counter + 1 == index {
-                        print!("\x1b[3;4;47m")
-                    }
                     print!("{:?}\x1b[1m", cmd);
-                    index_counter += 1;
                 }
                 AsmCmd::Byte(byte) => {
                     print!("{}:", byte);
@@ -417,7 +383,6 @@ impl AsmBuilder<'_> {
                     } else {
                         print!("'{}',", *byte as char);
                     };
-                    index_counter += 1;
                 }
                 AsmCmd::List(list) => {
                     let list = list
@@ -426,9 +391,12 @@ impl AsmBuilder<'_> {
                         .collect::<Vec<String>>()
                         .join(" ");
                     print!("[{}],", list);
-                    index_counter += list.len() + 1;
                 }
-                AsmCmd::Label(_) => unreachable!(),
+                AsmCmd::Func(name) => print!("{}", name.as_str()),
+                AsmCmd::Label(name) => {
+                    counter = 0;
+                    print!("\n\x1b[0m{}:\n", name.as_str())
+                }
             }
         }
         println!("\x1b[0m")

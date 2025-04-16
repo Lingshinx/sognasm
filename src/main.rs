@@ -3,6 +3,7 @@ mod assemble;
 mod command;
 mod machine;
 mod parser;
+mod record;
 mod runtime;
 mod test;
 mod util;
@@ -12,8 +13,7 @@ use assemble::Asm;
 use colored::Colorize;
 use parser::AsmBuilder;
 use runtime::Runtime;
-use std::{fs, io, time::Duration};
-use text_io::read;
+use std::fs;
 
 fn main() {
     let arguments = Arguments::new();
@@ -34,27 +34,9 @@ fn main() {
         }
     };
 
+    // builder.display(1);
+
     let asm = Asm::from(builder.clone());
 
-    for (k, v) in &builder.label_record {
-        println!("{},{}", k, v)
-    }
-
-    for (k, v) in asm.cmds.iter().enumerate() {
-        println!("{},{:?}", k, v)
-    }
-
-    let mut runtime = Runtime::new(asm);
-
-    if arguments.is_print() {
-        if arguments.is_code() {
-            runtime.run_with_codes(arguments.speed(), builder);
-        } else {
-            runtime.run_while_printing(arguments.speed());
-        }
-    } else if arguments.is_code() {
-        builder.display(0);
-    } else {
-        runtime.run();
-    }
+    Runtime::run(asm);
 }

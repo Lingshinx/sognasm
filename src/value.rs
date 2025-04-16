@@ -3,29 +3,29 @@ use std::{collections::LinkedList, rc::Rc};
 
 use colored::Colorize;
 
-pub struct Closure {
-    pub capture: Vec<Value>,
+pub struct Closure<'a> {
+    pub capture: Vec<Value<'a>>,
     pub ip: usize,
 }
 
 #[derive(Clone)]
-pub enum Value {
+pub enum Value<'a> {
     Number(f64),
     Function(usize),
-    Closure(Rc<Closure>),
-    List(LinkedList<Value>),
-    String(String),
+    Closure(Rc<Closure<'a>>),
+    List(LinkedList<Value<'a>>),
+    String(&'a str),
     Byte(u8),
     Bool(bool),
 }
 
-impl std::fmt::Debug for Value {
+impl std::fmt::Debug for Value<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.color_str())
     }
 }
 
-impl Value {
+impl Value<'_> {
     fn color_str(&self) -> String {
         use Value::*;
         match self {

@@ -1,8 +1,3 @@
-use std::{collections::HashMap, hash::Hash};
-
-pub fn align_8(index: usize) -> usize {
-    (index + 7) >> 3 << 3
-}
 pub fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -57,18 +52,4 @@ pub fn uneccape(s: &str) -> u8 {
     } else {
         first as u8
     }
-}
-
-pub fn swap_kv<K, V>(source: HashMap<K, V>) -> HashMap<V, K>
-where
-    V: Eq,
-    V: Hash,
-    K: Eq,
-    K: Hash,
-{
-    let mut result = HashMap::<V, K>::new();
-    for (k, v) in source {
-        result.insert(v, k);
-    }
-    result
 }

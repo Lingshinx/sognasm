@@ -37,18 +37,25 @@ impl Arguments {
         Arguments(argus())
     }
 
+    #[allow(dead_code)]
     pub fn speed(&self) -> u64 {
         *self.0.get_one("speed").unwrap()
     }
+
+    #[allow(dead_code)]
     pub fn is_print(&self) -> bool {
         *self.0.get_one("print").unwrap()
     }
+
+    #[allow(dead_code)]
     pub fn is_code(&self) -> bool {
         *self.0.get_one("code").unwrap()
     }
+
     pub fn source(&self) -> &String {
         self.0.get_one("source").unwrap()
     }
+
     #[allow(dead_code)]
     pub fn output(&self) -> &String {
         self.0.get_one("output").unwrap()
