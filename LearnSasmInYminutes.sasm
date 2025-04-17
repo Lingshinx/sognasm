@@ -1,0 +1,133 @@
+; Use ; to comment
+; Define a code block
+hello { ; block name is only allowed '_' and lower case letters
+  Print "hello"
+}
+; It is same like below
+hello:
+  Print "hello"
+Ret
+
+; You can call hello just write it's identifier
+hello ; It will print "hello"
+
+; literals
+100.00e10 ; number
+41H       ; byte
+'a'       ; byte, too
+"sognasm" ; string
+True False; boolean
+
+; Calculation
+Add 1 1       ; 1 + 1 = 2
+Sub 2 1       ; 2 - 1 = 1
+SubBy 2 1     ; 1 - 2 = -1
+Mul 3 Div 4 2 ; 3 * (4 / 2)
+And Ge Mul 3 2 5 Eq 3 Mod 10 3 ; (3 * 2 >= 5 && 3 == 10 % 3)
+; Sognasm is a stack language,
+; It execute from top to bottom and from right to left
+; So the expression above is same with
+    Mod 10 3
+    3
+  Eq
+    5
+    Mul 3 2
+  Ge
+And
+; all the operations are
+; Add 
+; Sub
+; SubBy
+; Mul
+; Div
+; DivBy
+; Mod
+; ModBy
+; BitOr    |
+; BitAnd   &
+; Xor      ^
+; And      &&
+; Or       ||
+; Not      !
+; Lt       <
+; Gt       >
+; Eq       ==
+; Le       <=
+; Ge       >=
+
+; local value
+square {
+  Let; $0 = x ; pop the top value on stack and storage it to $0
+  Mul $0 $0
+}
+
+square 10 ;=> 100
+
+is_trangle {
+  Let ; $0 = a
+  Let ; $1 = b
+  Let ; $2 = c (comments are unnecessary, but imporve readability)
+  Eq square $2 Add square $0 square $1
+  ; square(a) + square(b) == square(c)
+}
+
+; function
+; Sognac is a functional language, so does Sognasm
+(hello)         ; put a function on the stack top without calling it
+do {$0 Let}     ; call the function on the stack top
+
+repeat {
+  Let; $0 = repeat_time 
+  Let; $1 = fun to repeat
+  do If Not Eq $0 0 (repeat_if) (repeat_else) $0 ($1)
+}
+
+repeat_if {
+  Let; $0 = repeat time 
+  Let; $1 = fun to repeat
+  $1
+  repeat Sub $0 1 ($1)
+}
+
+repeat_else {
+  Drop Drop
+}
+
+repeat 5 (hello) ; print "hello" for 5 times
+
+; anonymous function and automatical capturing is not available on Sognasm
+; I'm terribly sorry for that, please wait me to develop Sognac
+
+; Capture
+
+fact {
+  Let; $0 = x
+  do If Le $0 1 (one) $[0] (fact_if)
+                      ; ^ capture $0, turn the func fact_if into closure
+}
+one {1}
+
+fact_if {
+  Mul #0 fact Sub #0 1
+     ; ^ push the captured value
+}
+
+; you can also use #[0,1,2] to capture #0 #1 #2
+
+; List
+; you can use a function to create a list
+Print List (init) ;=> [1, 2, 3]
+
+init { 1 2 3 }
+
+; below are operations to list
+Insert
+Append
+Concat
+Length
+Empty
+Head
+Rest
+
+End ; It's also a operations to exit process
+

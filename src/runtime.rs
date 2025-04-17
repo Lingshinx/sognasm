@@ -252,12 +252,7 @@ impl<'a> Runtime<'a> {
                     .map(|x| self.machine.local(x.0).clone())
                     .collect();
                 self.jmp(index);
-                if let Function(ip) = self.pop()? {
-                    let closure = Rc::new(crate::value::Closure { ip, capture });
-                    self.push(Closure(closure))?;
-                } else {
-                    return Err(NotaClosure);
-                }
+                self.capture(capture)?
             }
 
             CapCap => {
@@ -271,16 +266,8 @@ impl<'a> Runtime<'a> {
                     .iter()
                     .map(|x| closure.capture[x.0 as usize].clone())
                     .collect();
-                if let Closure(closure) = self.pop()? {
-                    let capture: Vec<Value> = closure
-                        .capture
-                        .iter()
-                        .chain(capture.iter())
-                        .cloned()
-                        .collect();
-                    let closure = Rc::new(crate::value::Closure { ip: index, capture });
-                    self.push(Closure(closure))?;
-                }
+                self.jmp(index);
+                self.capture(capture)?
             }
 
             PushCap => {
@@ -465,5 +452,30 @@ impl<'a> Runtime<'a> {
         } else {
             Err(NotaList)
         }
+    }
+
+    fn capture(&mut self, capture: Vec<Value<'a>>) -> Result<(), ErrorMessage> {
+        use Value::*;
+        match self.pop()? {
+            Function(ip) => {
+                let closure = Rc::new(crate::value::Closure { ip, capture });
+                self.push(Closure(closure))?;
+            }
+            Closure(closure) => {
+                let capture: Vec<Value> = closure
+                    .capture
+                    .iter()
+                    .chain(capture.iter())
+                    .cloned()
+                    .collect();
+                let closure = Rc::new(crate::value::Closure {
+                    ip: closure.ip,
+                    capture,
+                });
+                self.push(Closure(closure))?;
+            }
+            _ => return Err(NotaClosure),
+        }
+        Ok(())
     }
 }
