@@ -43,5 +43,5 @@ sognasm source.sasm
 
 ## Todo
 
-- [] add more system calls
-- [] Implement binary bytecode output
+- [ ] add more system calls
+- [ ] Implement binary bytecode output
