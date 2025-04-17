@@ -15,7 +15,7 @@ Perhaps there is full of non-standard code that I'm unaware of.
 Please let me know so that the next one would not
 smash their precious keyboard into their head.
 
-<img alt="screenshot of sognasm code" src="./screenshot/sognasm.png">
+<img alt="screenshot of sognasm code" style="margin:auto" src="./screenshot/sognasm.png">
 
 ## Usage
 
