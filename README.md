@@ -39,7 +39,7 @@ sognasm source.sasm
 
 ## Tutorial
 
-[learn Sognasm in Y minutes](./blob/main/LearnSasmInYminutes.sasm)
+[learn Sognasm in Y minutes](./LearnSasmInYminutes.sasm)
 
 ## Todo
 
