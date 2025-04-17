@@ -1,12 +1,12 @@
 # Sognasm
 
-A simple bytecode interpreter for Sognac, inspired by [Cognac](https://github.com/cognate-lang/cognate)
+A simple bytecode interpreter for Sognac, inspired by [Cognac](https://github.com/cognate-lang/cognate),
 built using Rust and [pest parser library](https://github.com/pest-parser/pest)
 
-Childish though it is, Sogansm is decided to be shown off to my friends
+Childish though it may be, Sogansm is decided to be shown off to my friends
 as my first programming language project.
 
-Thanks for checking out the early version of my project.
+Thanks for checking out this early version of my project.
 Feel free to experiment and share your feedback.
 I appreciate all forms of constructive suggestion from you.
 
