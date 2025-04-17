@@ -7,7 +7,7 @@ Childish though it is, Sogansm is decided to be shown off to my friends
 as my first programming language project.
 
 Thanks for checking out the early version of my project.
-Feel free to experiment and share your feedback
+Feel free to experiment and share your feedback.
 I appreciate all forms of constructive suggestion from you.
 
 By the way, I'm a beginner of Rust.
